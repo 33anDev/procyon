@@ -1,5 +1,7 @@
 <div align="center">
 
+![Procyon](assets/procyon-social-final.png)
+
 # ◆ Procyon
 
 **A transparent, open-source process monitor — built in Rust.**
