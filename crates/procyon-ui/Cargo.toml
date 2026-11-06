@@ -17,3 +17,19 @@ egui = "0.29"
 egui_extras = "0.29"
 sysinfo = "0.32"
 humansize = "2"
+
+# Windows-only: direct Win32 calls for process actions (priority, suspend,
+# terminate) and for extracting each executable's icon. Every feature listed
+# here maps to one group of APIs used in `actions.rs` / `icons.rs`.
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.58"
+features = [
+    "Win32_Foundation",                 # HANDLE, CloseHandle, error codes
+    "Win32_System_Threading",           # OpenProcess, SetPriorityClass, TerminateProcess, Suspend/ResumeThread
+    "Win32_System_Diagnostics_ToolHelp",# thread enumeration for suspend/resume
+    "Win32_System_Com",                 # CoInitializeEx for the icon worker thread
+    "Win32_Storage_FileSystem",         # FILE_FLAGS_AND_ATTRIBUTES for SHGetFileInfoW
+    "Win32_UI_Shell",                   # SHGetFileInfoW
+    "Win32_UI_WindowsAndMessaging",     # HICON, GetIconInfo, DestroyIcon
+    "Win32_Graphics_Gdi",               # GetDIBits: icon bitmap -> RGBA pixels
+]
