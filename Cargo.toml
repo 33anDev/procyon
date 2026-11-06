@@ -1,0 +1,18 @@
+# Workspace root for Procyon.
+[workspace]
+resolver = "2"
+members = ["crates/procyon-ui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["33anDev"]
+repository = "https://github.com/33anDev/procyon"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
