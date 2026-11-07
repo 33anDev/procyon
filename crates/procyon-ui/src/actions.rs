@@ -95,6 +95,9 @@ pub fn reveal_in_file_manager(exe: &Path) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 pub use win::{current_priority, probe, resume, set_priority, suspend, terminate};
+/// Shared with `details.rs`, which reads (never modifies) process state.
+#[cfg(target_os = "windows")]
+pub(crate) use win::{open_process, OwnedHandle};
 
 #[cfg(target_os = "windows")]
 mod win {
@@ -116,7 +119,7 @@ mod win {
 
     /// A Win32 handle that is closed when dropped, so no early-return path
     /// can leak it.
-    struct OwnedHandle(HANDLE);
+    pub(crate) struct OwnedHandle(pub(crate) HANDLE);
 
     impl Drop for OwnedHandle {
         fn drop(&mut self) {
@@ -127,7 +130,7 @@ mod win {
         }
     }
 
-    fn open_process(pid: u32, access: PROCESS_ACCESS_RIGHTS) -> Result<OwnedHandle, Error> {
+    pub(crate) fn open_process(pid: u32, access: PROCESS_ACCESS_RIGHTS) -> Result<OwnedHandle, Error> {
         // SAFETY: plain FFI call; the returned handle is wrapped immediately.
         unsafe { OpenProcess(access, false, pid).map(OwnedHandle) }
     }

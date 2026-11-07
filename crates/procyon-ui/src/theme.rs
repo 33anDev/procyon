@@ -188,6 +188,18 @@ pub fn chip() -> Frame {
     }
 }
 
+/// Small tinted tag (process state, integrity level) in `color`.
+pub fn pill(color: Color32) -> Frame {
+    Frame {
+        inner_margin: Margin::symmetric(7.0, 1.0),
+        outer_margin: Margin::ZERO,
+        rounding: Rounding::same(6.0),
+        shadow: Shadow::NONE,
+        fill: color.gamma_multiply(0.14),
+        stroke: Stroke::new(1.0_f32, color.gamma_multiply(0.5)),
+    }
+}
+
 /// Color for a CPU bar at `t` = 0..1 load: cyan → violet → red.
 pub fn heat(t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);

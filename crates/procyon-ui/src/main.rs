@@ -7,6 +7,7 @@
 
 mod actions; // OS-level process actions (Win32 on Windows)
 mod app;
+mod details; // in-depth per-process data for the detail panel (background worker)
 mod icons; // per-exe icon extraction + texture cache
 mod process;
 mod theme;

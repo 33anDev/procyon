@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, UpdateKind};
+use sysinfo::{Pid, Process, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, UpdateKind};
 
 /// One row in the process table. Owned, cheap to clone, independent of the
 /// live `System` so the UI can sort/filter freely.
@@ -94,15 +94,7 @@ impl ProcessMonitor {
             .system
             .processes()
             .values()
-            .map(|p| ProcInfo {
-                pid: p.pid().as_u32(),
-                parent: p.parent().map(|pp| pp.as_u32()),
-                name: p.name().to_string_lossy().into_owned(),
-                exe: p.exe().map(|e| e.to_path_buf()),
-                cpu: if self.primed { p.cpu_usage() } else { 0.0 },
-                memory: p.memory(),
-                user: p.user_id().map(|uid| uid.to_string()),
-            })
+            .map(|p| self.to_info(p))
             .filter(|r| {
                 q.is_empty()
                     || r.name.to_ascii_lowercase().contains(&q)
@@ -110,17 +102,55 @@ impl ProcessMonitor {
             })
             .collect();
 
-        rows.sort_by(|a, b| {
-            let ord = match key {
-                SortKey::Name => a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()),
-                SortKey::Pid => a.pid.cmp(&b.pid),
-                SortKey::Cpu => a.cpu.partial_cmp(&b.cpu).unwrap_or(std::cmp::Ordering::Equal),
-                SortKey::Memory => a.memory.cmp(&b.memory),
-            };
-            if descending { ord.reverse() } else { ord }
-        });
+        rows.sort_by(|a, b| row_order(a, b, key, descending));
 
         rows
+    }
+
+    /// Refresh the values that change over a process's lifetime (CPU%,
+    /// memory) on rows that already exist, matched by PID, **without**
+    /// changing their order or which rows are present.
+    ///
+    /// Used while the table is frozen (pointer hovering, or Pause engaged):
+    /// the numbers stay live but rows don't jump, so the user can aim at a
+    /// row and click it. Rows whose process has since exited keep their last
+    /// values until the table unfreezes and is rebuilt.
+    pub fn refresh_values(&self, rows: &mut [ProcInfo]) {
+        for r in rows.iter_mut() {
+            if let Some(p) = self.system.process(Pid::from_u32(r.pid)) {
+                if self.primed {
+                    r.cpu = p.cpu_usage();
+                }
+                r.memory = p.memory();
+            }
+        }
+    }
+
+    /// Live data for one process, regardless of the current filter (the
+    /// detail panel keeps showing a process even if it's filtered out).
+    pub fn info(&self, pid: u32) -> Option<ProcInfo> {
+        self.system.process(Pid::from_u32(pid)).map(|p| self.to_info(p))
+    }
+
+    /// Name of `pid`'s parent, if the parent is still alive and really is
+    /// its parent (see [`is_true_parent`] on PID reuse).
+    pub fn parent_name(&self, pid: u32) -> Option<String> {
+        let procs = self.system.processes();
+        let child = procs.get(&Pid::from_u32(pid))?;
+        let parent = procs.get(&child.parent()?)?;
+        is_true_parent(parent, child).then(|| parent.name().to_string_lossy().into_owned())
+    }
+
+    fn to_info(&self, p: &Process) -> ProcInfo {
+        ProcInfo {
+            pid: p.pid().as_u32(),
+            parent: p.parent().map(|pp| pp.as_u32()),
+            name: p.name().to_string_lossy().into_owned(),
+            exe: p.exe().map(|e| e.to_path_buf()),
+            cpu: if self.primed { p.cpu_usage() } else { 0.0 },
+            memory: p.memory(),
+            user: p.user_id().map(|uid| uid.to_string()),
+        }
     }
 
     /// Total number of processes currently tracked (pre-filter).
@@ -139,9 +169,7 @@ impl ProcessMonitor {
     /// `root` plus all of its descendants, ordered children-before-parents so
     /// that killing in this order never orphans a still-running subtree.
     ///
-    /// Windows recycles PIDs, so a process's recorded parent PID may now
-    /// belong to an unrelated, *newer* process. We only accept a parent link
-    /// if the parent started no later than the child, which rules that out.
+    /// Only trustworthy parent links are followed (see [`is_true_parent`]).
     pub fn tree(&self, root: u32) -> Vec<u32> {
         let procs = self.system.processes();
 
@@ -149,10 +177,8 @@ impl ProcessMonitor {
         let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
         for p in procs.values() {
             if let Some(parent_pid) = p.parent() {
-                let parent_ok = procs
-                    .get(&parent_pid)
-                    .is_some_and(|parent| parent.start_time() <= p.start_time());
-                if parent_ok && parent_pid != p.pid() {
+                let parent_ok = procs.get(&parent_pid).is_some_and(|parent| is_true_parent(parent, p));
+                if parent_ok {
                     children.entry(parent_pid.as_u32()).or_default().push(p.pid().as_u32());
                 }
             }
@@ -238,6 +264,28 @@ impl ProcessMonitor {
     }
 }
 
+/// Windows recycles PIDs, so a process's recorded parent PID may now belong
+/// to an unrelated, *newer* process. A parent link is only trusted if the
+/// parent started no later than the child, which rules that out.
+fn is_true_parent(parent: &Process, child: &Process) -> bool {
+    parent.pid() != child.pid() && parent.start_time() <= child.start_time()
+}
+
+/// Order two rows by the active sort column and direction, then break ties
+/// by PID (always ascending). The PID tie-break makes the order total and
+/// deterministic, so rows with equal CPU/memory/name never swap places from
+/// one refresh to the next.
+fn row_order(a: &ProcInfo, b: &ProcInfo, key: SortKey, descending: bool) -> std::cmp::Ordering {
+    let ord = match key {
+        SortKey::Name => a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()),
+        SortKey::Pid => a.pid.cmp(&b.pid),
+        SortKey::Cpu => a.cpu.partial_cmp(&b.cpu).unwrap_or(std::cmp::Ordering::Equal),
+        SortKey::Memory => a.memory.cmp(&b.memory),
+    };
+    let ord = if descending { ord.reverse() } else { ord };
+    ord.then(a.pid.cmp(&b.pid))
+}
+
 /// Suspending ourselves would freeze the UI with no way to resume.
 fn guard_self(pid: u32) -> Result<(), String> {
     if pid == std::process::id() {
@@ -250,5 +298,43 @@ fn guard_self(pid: u32) -> Result<(), String> {
 impl Default for ProcessMonitor {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(pid: u32, name: &str, cpu: f32, memory: u64) -> ProcInfo {
+        ProcInfo { pid, parent: None, name: name.into(), exe: None, cpu, memory, user: None }
+    }
+
+    fn sorted(mut rows: Vec<ProcInfo>, key: SortKey, descending: bool) -> Vec<u32> {
+        rows.sort_by(|a, b| row_order(a, b, key, descending));
+        rows.iter().map(|r| r.pid).collect()
+    }
+
+    #[test]
+    fn equal_values_break_ties_by_pid() {
+        // Three processes with identical CPU: order must be by PID, the same
+        // in both directions, so hovering never sees them swap.
+        let rows = vec![row(30, "c", 5.0, 0), row(10, "a", 5.0, 0), row(20, "b", 5.0, 0)];
+        assert_eq!(sorted(rows.clone(), SortKey::Cpu, true), [10, 20, 30]);
+        assert_eq!(sorted(rows, SortKey::Cpu, false), [10, 20, 30]);
+    }
+
+    #[test]
+    fn duplicate_names_order_by_pid() {
+        // Four "svchost.exe"-style duplicates stay in PID order under a Name
+        // sort, regardless of input order.
+        let rows = vec![row(44, "svc", 0.0, 0), row(11, "svc", 0.0, 0), row(22, "svc", 0.0, 0)];
+        assert_eq!(sorted(rows, SortKey::Name, false), [11, 22, 44]);
+    }
+
+    #[test]
+    fn primary_key_still_wins() {
+        let rows = vec![row(10, "a", 1.0, 0), row(20, "b", 9.0, 0)];
+        assert_eq!(sorted(rows.clone(), SortKey::Cpu, true), [20, 10]);
+        assert_eq!(sorted(rows, SortKey::Cpu, false), [10, 20]);
     }
 }

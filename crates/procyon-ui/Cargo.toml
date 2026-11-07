@@ -19,17 +19,23 @@ sysinfo = "0.32"
 humansize = "2"
 
 # Windows-only: direct Win32 calls for process actions (priority, suspend,
-# terminate) and for extracting each executable's icon. Every feature listed
-# here maps to one group of APIs used in `actions.rs` / `icons.rs`.
+# terminate), for extracting each executable's icon, and for the detail
+# panel. Every feature listed here maps to one group of APIs used in
+# `actions.rs` / `icons.rs` / `details.rs`.
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.58"
 features = [
     "Win32_Foundation",                 # HANDLE, CloseHandle, error codes
-    "Win32_System_Threading",           # OpenProcess, SetPriorityClass, TerminateProcess, Suspend/ResumeThread
+    "Win32_System_Threading",           # OpenProcess, SetPriorityClass, TerminateProcess, Suspend/ResumeThread, GetProcessTimes, OpenProcessToken
     "Win32_System_Diagnostics_ToolHelp",# thread enumeration for suspend/resume
     "Win32_System_Com",                 # CoInitializeEx for the icon worker thread
     "Win32_Storage_FileSystem",         # FILE_FLAGS_AND_ATTRIBUTES for SHGetFileInfoW
     "Win32_UI_Shell",                   # SHGetFileInfoW
     "Win32_UI_WindowsAndMessaging",     # HICON, GetIconInfo, DestroyIcon
     "Win32_Graphics_Gdi",               # GetDIBits: icon bitmap -> RGBA pixels
+    "Win32_Security",                   # token queries: integrity, elevation, owning account
+    "Win32_System_Time",                # process start time -> local wall-clock time
+    "Win32_System_WindowsProgramming",  # SYSTEM_PROCESS/THREAD_INFORMATION layouts
+    "Wdk_System_SystemInformation",     # NtQuerySystemInformation: thread/handle counts, suspended state
+    "Wdk_System_Threading",             # NtQueryInformationProcess: command line
 ]
